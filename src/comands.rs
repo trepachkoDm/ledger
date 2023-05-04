@@ -106,6 +106,7 @@ impl Command {
         assets: &mut Assets,
     ) -> Result<(), BlockchainError> {
         match self {
+            // Добавляет новый счет в Accounts
             Self::CreateAccount { public_key } => {
                 accounts.insert(
                     (accounts.len() + 1) as u32,
@@ -117,6 +118,7 @@ impl Command {
                     },
                 );
             }
+            // Добавляет указанную сумму средств на счет.
             Self::AddFunds {
                 account_id,
                 value,
@@ -130,6 +132,7 @@ impl Command {
                     },
                 );
             }
+            // Переводит определенную сумму средств с одного счета на другой.
             Self::TransferFunds {
                 from_account_id,
                 to_account_id,
@@ -149,6 +152,7 @@ impl Command {
                     .ok_or(BlockchainError::AssetNotFound)?;
                 asset_to.value += *value;
             }
+            // Обновляет имя и/или контактную информацию счета.
             Self::UpdateAccount {
                 account_id,
                 name,
@@ -164,6 +168,7 @@ impl Command {
                     account.contact_info = Some(contact_info.clone());
                 }
             }
+            // Выполняет указанный смарт-контракт, в настоящее время поддерживается только "transfer_funds".
             Self::ExecuteSmartContract {
                 contract_id,
                 params,
@@ -191,6 +196,7 @@ impl Command {
                     return Err(BlockchainError::UnknownContract(contract_id.clone()));
                 }
             }
+            // добавляет на счет определенное количество определенного актива.
             Self::IssueAsset {
                 account_id,
                 asset_id,
@@ -204,6 +210,7 @@ impl Command {
                     });
                 asset.value += *value;
             }
+            // передает право собственности на указанный актив с одного счета на другой.
             Self::TransferAsset {
                 from_account_id,
                 to_account_id,
@@ -214,6 +221,7 @@ impl Command {
                     .ok_or(BlockchainError::AssetNotFound)?;
                 asset.owner_id = *to_account_id;
             }
+            // уменьшает количество указанного актива на счете и увеличивает количество другого указанного актива на ту же сумму.
             Self::RedeemAsset {
                 account_id,
                 asset_id,
@@ -233,6 +241,7 @@ impl Command {
                     .ok_or(BlockchainError::AssetNotFound)?;
                 redeem_in_asset.value += *value;
             }
+            // Вычитает указанную сумму средств со счета в качестве комиссии за транзакцию.
             Self::TransactionCommission { account_id, value } => {
                 let asset = assets
                     .get_mut(&(*account_id, "currency".to_string()))

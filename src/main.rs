@@ -1,7 +1,16 @@
 use self::crypto::Hash;
 use crate::client::Client;
 use crate::peer::Peer;
-use std::{collections::HashMap, sync::mpsc::channel, thread};
+
+use std::io;
+// use std::sync::mpsc::channel;
+use std::sync::{Arc, Mutex};
+use std::{
+    // collections::HashMap,
+    sync::mpsc::{self},
+    thread,
+};
+// use storage::Storage;
 use ursa::signatures::{prelude::Ed25519Sha512, SignatureScheme};
 mod client;
 mod comands;
@@ -9,106 +18,95 @@ mod crypto;
 mod peer;
 mod storage;
 
+pub fn run_cli(client: Arc<Mutex<Client>>) {
+    let stdin = io::stdin();
+
+    loop {
+        let mut buffer = String::new();
+        stdin.read_line(&mut buffer).unwrap();
+        let command_parts: Vec<&str> = buffer.split_whitespace().collect();
+
+        if !command_parts.is_empty() {
+            let command = match command_parts.len() {
+                1 => command_parts[0].to_string(),
+                _ => format!("{} {}", command_parts[0], command_parts[1]),
+            };
+
+            match command.as_str() {
+                "create account" => match client.lock().unwrap().create_account() {
+                    Ok(()) => println!("Account created."),
+                    Err(err) => println!("Error: {:?}", err),
+                },
+                "add funds" => {
+                    if command_parts.len() < 4 {
+                        println!("Usage: add funds <account_id> <value> <asset_id>");
+                    } else {
+                        let account_id = command_parts[2].parse().unwrap();
+                        let value = command_parts[3].parse().unwrap();
+                        let asset_id = command_parts[4].to_string();
+
+                        match client
+                            .lock()
+                            .unwrap()
+                            .add_funds(account_id, value, asset_id)
+                        {
+                            Ok(()) => println!("Funds added."),
+                            Err(err) => println!("Error: {:?}", err),
+                        }
+                    }
+                }
+                "exit" => {
+                    println!("Exiting...");
+                    break;
+                }
+                "help" => {
+                    println!("Available commands:");
+                    println!("create account: Create a new account.");
+                    println!("add funds <account_id> <value> <asset_id>: Add funds to an account.");
+                    println!("exit: Exit the program.");
+                }
+                _ => println!("Unknown command. Type 'help' for a list of commands."),
+            }
+        } else {
+            println!("No command entered. Type 'help' for a list of commands.");
+        }
+    }
+}
+
 fn main() {
-    let (tx1, rx1) = channel();
-    let (tx2, rx2) = channel();
-    let (tx3, rx3) = channel();
-    let (tx2_1, tx3_1) = (tx2.clone(), tx3.clone());
-    let (tx1_2, tx3_2) = (tx1.clone(), tx3.clone());
-    let (tx1_3, tx2_3) = (tx1.clone(), tx2.clone());
-    let (public_key1, private_key1) = Ed25519Sha512::new().keypair(None).unwrap();
-    let (public_key2, private_key2) = Ed25519Sha512::new().keypair(None).unwrap();
-    let (public_key3, private_key3) = Ed25519Sha512::new().keypair(None).unwrap();
+    let (client_to_peer_tx, peer_rx) = mpsc::channel();
+    let (peer_to_client_tx, client_rx) = mpsc::channel();
 
-    let _public_key1_clone = public_key1.clone();
-    let public_key2_clone = public_key2.clone();
-    let public_key3_clone = public_key3.clone();
+    let (public_key, private_key) = Ed25519Sha512::new().keypair(None).unwrap();
 
-    let peer1_thread_handle = thread::spawn(move || {
-        let peer1 = Peer::new(
-            1,
-            rx1,
-            vec![tx2_1, tx3_1],
-            50,
-            vec![public_key2_clone, public_key3_clone],
-        );
-        peer1.start().unwrap();
+    let client_to_peer_tx_clone = client_to_peer_tx.clone();
+    let client = Arc::new(Mutex::new(Client::new(
+        client_to_peer_tx_clone,
+        public_key.clone(),
+        private_key,
+        client_rx,
+    )));
+
+    let peer = Peer::new(
+        1,
+        peer_rx,
+        vec![client_to_peer_tx],
+        50,
+        vec![public_key],
+        peer_to_client_tx,
+    );
+
+    let peer_handle = thread::spawn(move || {
+        peer.start().unwrap();
     });
 
-    let public_key1_clone = public_key1.clone();
-    let _public_key2_clone = public_key2.clone();
-    let public_key3_clone = public_key3.clone();
-
-    let peer2_thread_handle = thread::spawn(move || {
-        let peer2 = Peer::new(
-            2,
-            rx2,
-            vec![tx1_2, tx3_2],
-            40,
-            vec![public_key1_clone, public_key3_clone],
-        );
-        peer2.start().unwrap();
+    let client_clone = Arc::clone(&client);
+    let client_handle = thread::spawn(move || {
+        client_clone.lock().unwrap().receive_updates();
     });
 
-    let public_key1_clone = public_key1.clone();
-    let public_key2_clone = public_key2.clone();
-    let _public_key3_clone = public_key3.clone();
+    run_cli(client);
 
-    let peer3_thread_handle = thread::spawn(move || {
-        let peer3 = Peer::new(
-            3,
-            rx3,
-            vec![tx1_3, tx2_3],
-            25,
-            vec![public_key1_clone, public_key2_clone],
-        );
-        peer3.start().unwrap();
-    });
-
-    let peer1_client = Client::new(tx1, public_key1, private_key1);
-    let peer2_client = Client::new(tx2, public_key2, private_key2);
-    let peer3_client = Client::new(tx3, public_key3, private_key3);
-
-    peer1_client.create_account().unwrap();
-    println!("{:?}", peer1_client);
-    peer2_client.create_account().unwrap();
-    println!("{:?}", peer2_client);
-    peer3_client.create_account().unwrap();
-    println!("{:?}", peer3_client);
-
-    peer1_client
-        .transfer_funds(1, 2, 13, String::from("Asset1"))
-        .unwrap();
-    println!("{:?}", peer1_client);
-    peer2_client
-        .update_account(2, Some(String::from("Saroza")), None)
-        .unwrap();
-    println!("{:?}", peer2_client);
-
-    let mut params = HashMap::new();
-    params.insert(String::from("param1"), String::from("value1"));
-    params.insert(String::from("param2"), String::from("value2"));
-    peer1_client
-        .execute_smart_contract(1, String::from("contract_id"), params)
-        .unwrap();
-    println!("{:?}", peer1_client);
-
-    peer3_client
-        .release_asset(3, String::from("Asset2"), 26, String::from("AssetRel"))
-        .unwrap();
-    println!("{:?}", peer3_client);
-
-    peer2_client
-        .transfer_asset(2, 3, String::from("Asset1"))
-        .unwrap();
-    println!("{:?}", peer2_client);
-
-    peer1_client
-        .redeem_asset(1, String::from("Asset3"), 14, String::from("Asset4"))
-        .unwrap();
-    println!("{:?}", peer1_client);
-
-    peer1_thread_handle.join().expect("peer1 failed");
-    peer2_thread_handle.join().expect("peer2 failed");
-    peer3_thread_handle.join().expect("peer3 failed");
+    peer_handle.join().unwrap();
+    client_handle.join().unwrap();
 }

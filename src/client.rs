@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::mpsc::Sender};
+use std::{
+    collections::HashMap,
+    sync::mpsc::{Receiver, Sender},
+};
 
 use ursa::{
     keys::{PrivateKey, PublicKey},
@@ -36,22 +39,46 @@ pub enum ClientError {
 
     #[error("Failed to redeem asset: {0}")]
     RedeemAsset(String),
+
+    #[error("add funds: {0}")]
+    AddFunds(String),
+
+    #[error("issue asset: {0}")]
+    IssueAsset(String),
+
+    #[error("transaction commission: {0}")]
+    TransactionCommission(String),
 }
 #[derive(Debug)]
 pub struct Client {
     tx: Sender<Block>,
     public_key: PublicKey,
     private_key: PrivateKey,
+    peer_rx: Receiver<String>,
 }
 
 impl Client {
-    pub fn new(tx: Sender<Block>, public_key: PublicKey, private_key: PrivateKey) -> Self {
+    pub fn new(
+        tx: Sender<Block>,
+        public_key: PublicKey,
+        private_key: PrivateKey,
+        peer_rx: Receiver<String>,
+    ) -> Self {
         Self {
             tx,
             public_key,
             private_key,
+            peer_rx,
         }
     }
+    // метод для получения обновлений от Peer
+    pub fn receive_updates(&self) {
+        while let Ok(message) = self.peer_rx.recv() {
+            println!("Received update: {}", message);
+        }
+    }
+
+    // функция send_transaction, отвечает за создание блока из транзакции, подписание его закрытым ключом и отправку в канал.
     fn send_transaction(&self, transaction: Transaction) -> Result<(), ClientError> {
         let data = vec![transaction];
         let signature = Ed25519Sha512::new()
@@ -176,5 +203,44 @@ impl Client {
             },
         })
         .map_err(|_| ClientError::RedeemAsset("redeem asset".to_string()))
+    }
+
+    pub fn add_funds(
+        &self,
+        account_id: u32,
+        value: i32,
+        asset_id: String,
+    ) -> Result<(), ClientError> {
+        self.send_transaction(Transaction {
+            command: Command::AddFunds {
+                account_id,
+                value,
+                asset_id,
+            },
+        })
+        .map_err(|_| ClientError::AddFunds("add funds".to_string()))
+    }
+
+    pub fn issue_asset(
+        &self,
+        account_id: u32,
+        asset_id: String,
+        value: i32,
+    ) -> Result<(), ClientError> {
+        self.send_transaction(Transaction {
+            command: Command::IssueAsset {
+                account_id,
+                asset_id,
+                value,
+            },
+        })
+        .map_err(|_| ClientError::IssueAsset("issue asset".to_string()))
+    }
+
+    pub fn transaction_commission(&self, account_id: u32, value: i32) -> Result<(), ClientError> {
+        self.send_transaction(Transaction {
+            command: Command::TransactionCommission { account_id, value },
+        })
+        .map_err(|_| ClientError::TransactionCommission("transaction commission".to_string()))
     }
 }
